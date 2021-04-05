@@ -1,0 +1,136 @@
+---
+title: "High Impact Weather Event Types in the United States"
+author: "Emily Brady"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+This report analyzes data from the NOAA Storm Database to determine which types of weather events have the greatest impact on population health and the highest economic consequences. Here, population health is defined as injuries and fatalities while economic consequences considers crop and property damage caused by the events. The data consists of forty-six weather event types ranging from 1993 to 2011. The impact of events are considered on both an average and total level. The top 5 events with the greatest average effect on population health are Tsunamis, Excessive Heat, Heat, Rip Currents, and Dust Storms. The top 5 events with the greatest total effect on population health are Tornadoes, Excessive Heat, Floods, Lightning, and Heat. The top 5 events with the greatest average economic consequences are Storm Surges/Tides, Tropical Storms, Tsunamis, Droughts, and Floods. The top 5 events with the greatest total economic consequences are Floods, Tornadoes, Hail, Flash Floods, and Droughts.
+
+## Data Processing
+```{r read, cache=TRUE}
+# Read in raw data
+raw = read.csv("repdata_data_StormData.csv.bz2")
+raw$BGN_DATE = as.Date(raw$BGN_DATE, "%m/%d/%Y")
+```
+
+#### Clean up the Event Type
+The Storm Data Documentation lists 48 possible event types. However, the free-text entry column of EVTYPE contains more than 48 different types. To keep the process fairly simple for the sake of the analysis, we will ignore everything that doesn't exactly match these 48 event types (non case-sensitive).
+```{r evtype}
+raw$EVTYPE = toupper(raw$EVTYPE)
+events = toupper(c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane (Typhoon)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather"))
+a = raw[raw$EVTYPE %in% events,]
+```
+
+#### Remove years with fewer events recorded
+Although the data begins in 1950, the only events recorded until 1993 were Tornado and Hail. Because of this, I have decided to remove data that is older than 1993 from the analysis to create a more equal comparison between event types. To do this, I located the first date that had an event other than Tornado or Hail, and then only kept the rows that happened after that.
+```{r date}
+# Locate date
+b = a[(a$EVTYPE != 'TORNADO') & (a$EVTYPE != 'HAIL'),]
+date = b$BGN_DATE[1]
+
+# Remove Older Data
+b = a[a$BGN_DATE >= date,]
+```
+
+
+#### Multiply crop and property damage by multiplier
+To get the true damage values for crops and property, the damage is multiplied by the true value of its exponent.
+```{r damage, cache=TRUE}
+Exponent = c("K","k","M","m","B","b","H","h",0,1,2,3,4,5,6,7,8,"+","-","?","")
+Multiplier = c(1000,1000,1000000,1000000,1000000000,1000000000,100,100,1,1,1,1,1,1,1,1,1,1,0,0,0)
+exp = data.frame(cbind(Exponent,Multiplier))
+exp$Multiplier = sapply(exp$Multiplier, as.integer)
+b$PROPDMG_M = b$PROPDMGEXP
+b$CROPDMG_M = b$CROPDMGEXP
+for (i in 1:nrow(b)){
+    if (b$CROPDMGEXP[i] == ""){
+        b$CROPDMG_M[i] = 0
+    }
+    else {
+        for (j in 1:21){
+            if (b$CROPDMGEXP[i] == exp$Exponent[j]){
+                b$CROPDMG_M[i] = b$CROPDMG[i]*exp$Multiplier[j]
+            }
+            j = j+1
+        }
+    }
+    if (b$PROPDMGEXP[i] == ""){
+        b$PROPDMG_M[i] = 0
+    }
+    else {
+        for (j in 1:21){
+            if (b$PROPDMGEXP[i] == exp$Exponent[j]){
+                b$PROPDMG_M[i] = b$PROPDMG[i]*exp$Multiplier[j]
+            }
+            j = j+1
+        }
+    }
+    i = i+1
+}
+```
+
+#### Organize by Total and Average
+There are two different ways to consider which event types have the greatest effect on population health and the greatest economic consequences. The first is an average - which events, on average, have the biggest impact when they occur. This takes into account that some of the deadliest events may not happen very often. The second way is a total - which events have the biggest impact entirely based on the hard numbers. This second way can lend more weight to events that occur more frequently but may not have as big of an impact during each individual occurrence. I have decided to include both options in this report as it gives more flexibility to the analysis.
+Additionally, I have combined fatalities and injuries into a metric for population health as well as crop damage and property damage into a metric for economic consequences.
+```{r org}
+c = b
+c$CROPDMG_M = sapply(c$CROPDMG_M, as.double)
+c$PROPDMG_M = sapply(c$PROPDMG_M, as.double)
+total = aggregate(cbind(FATALITIES=c$FATALITIES, INJURIES=c$INJURIES, CROPDMG_M=c$CROPDMG_M, PROPDMG_M=c$PROPDMG_M), by=list(EVTYPE=c$EVTYPE), FUN=sum)
+total$HEALTH = total$FATALITIES + total$INJURIES
+total$ECON = total$CROPDMG_M + total$PROPDMG_M
+average = aggregate(cbind(FATALITIES=c$FATALITIES, INJURIES=c$INJURIES, CROPDMG_M=c$CROPDMG_M, PROPDMG_M=c$PROPDMG_M), by=list(EVTYPE=c$EVTYPE), FUN=mean)
+average$HEALTH = average$FATALITIES + average$INJURIES
+average$ECON = average$CROPDMG_M + average$PROPDMG_M
+average[,-1] = round(average[,-1],2) 
+```
+
+## Results
+#### Population Health
+```{r health}
+# Average
+avg = average[order(-average$HEALTH),]
+head(avg[,c(1,6)],5)
+
+# Total
+tot = total[order(-total$HEALTH),]
+head(tot[,c(1,6)],5)
+```
+
+The top 5 events with the greatest average effect on population health are Tsunamis, Excessive Heat, Heat, Rip Currents, and Dust Storms. The top 5 events with the greatest total effect on population health are Tornadoes, Excessive Heat, Floods, Lightning, and Heat.
+
+```{r g1}
+par(mar=c(10.75,5,2,1))
+plot(HEALTH~factor(EVTYPE), head(tot,15), las=2, xlab ="", size = 1,
+        main = "Total Effect of Event Type on Population Health (Top 15)")
+abline(h=2800, col = "red")
+```
+
+*** The red line holds no numerical significance. It simply exists to separate the top 5 from the next 10 event types.
+
+#### Economic Consequences
+```{r econ}
+# Average
+avg = average[order(-average$ECON),]
+head(avg[,c(1,7)],5)
+
+# Total
+tot = total[order(-total$ECON),]
+head(tot[,c(1,7)],5)
+```
+
+The top 5 events with the greatest average economic consequences are Storm Surges/Tides, Tropical Storms, Tsunamis, Droughts, and Floods. The top 5 events with the greatest total economic consequences are Floods, Tornadoes, Hail, Flash Floods, and Droughts.
+
+```{r g2}
+par(mar=c(10.75,5,2,1))
+plot(ECON~factor(EVTYPE), head(tot,15), las=2, xlab ="", size = 1,
+        main = "Total Economic Consequences by Event Type (Top 15)")
+abline(h=12000000000, col = "red")
+```
